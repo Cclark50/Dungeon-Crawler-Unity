@@ -39,7 +39,7 @@ public class GridMovement
         OnMovementRequested?.Invoke(request);
     }
 
-    void ExecuteMovement(MovementIntent intent, Vector2Int toGridPosition)
+    public void ExecuteMovement(MovementIntent intent, Vector2Int toGridPosition)
     {
         Vector2Int oldPosition = _gridPosition;
         _gridPosition = toGridPosition;
