@@ -1,0 +1,715 @@
+class Timeline {
+    currentTime: float = 0
+    events: PriorityQueue<TimelineEvent>  // sorted by executionTime
+    unitStates: Map<Unit, UnitTimelineState>
+    timeScale: float = 1.0  // for slow-mo effects
+}
+
+class TimelineEvent {
+    executionTime: float
+    eventType: enum { TURN_READY, CAST_COMPLETE, RECOVERY_END, STATUS_TICK }
+    unit: Unit
+    ability: Ability  // nullable, only for cast events
+    targetData: TargetData  // stores target position/units
+}
+
+class UnitTimelineState {
+    currentAction: enum { IDLE, CASTING, RECOVERING, STUNNED }
+    actionStartTime: float
+    actionEndTime: float
+    nextTurnTime: float
+    queuedAbility: Ability
+    queuedTarget: TargetData
+}
+
+class Ability {
+    name: string
+    castTime: float  // time to cast
+    recoveryTime: float  // time after cast before next action
+    range: float
+    damage: float
+
+    // Speed modifiers
+    castTimeModifier: enum { FIXED, SPEED_MODIFIED, HASTE_AFFECTED }
+    recoveryModifier: enum { FIXED, SPEED_MODIFIED, HASTE_AFFECTED }
+
+    // Can this be interrupted?
+    interruptible: boolean
+
+    // Movement while casting?
+    allowMovementDuringCast: boolean
+    castSpeedReduction: float  // 0.5 = half speed while casting
+}
+
+function InitializeTimeline(units: List<Unit>) -> Timeline {
+    timeline = new Timeline()
+
+    for unit in units:
+        // Initial delay based on speed/initiative
+        initialDelay = 100.0 / (50 + unit.stats.speed)  // faster units act sooner
+
+        event = TimelineEvent(
+            executionTime: initialDelay,
+            eventType: TURN_READY,
+            unit: unit
+        )
+        timeline.events.enqueue(event)
+
+        timeline.unitStates[unit] = new UnitTimelineState(
+            currentAction: IDLE,
+            nextTurnTime: initialDelay
+        )
+
+    return timeline
+}
+
+function ProcessTimeline(timeline: Timeline, deltaTime: float) {
+    timeline.currentTime += deltaTime * timeline.timeScale
+
+    while timeline.events.peek().executionTime <= timeline.currentTime:
+        event = timeline.events.dequeue()
+        ProcessEvent(event, timeline)
+}
+
+function ProcessEvent(event: TimelineEvent, timeline: Timeline) {
+    state = timeline.unitStates[event.unit]
+
+    switch event.eventType:
+        case TURN_READY:
+            if state.currentAction == IDLE:
+                // Unit can now act
+                event.unit.canAct = true
+
+                if event.unit.isAI:
+                    action = GetAIAction(event.unit)
+                    ExecuteAction(event.unit, action, timeline)
+                else:
+                    // Wait for player input
+                    HighlightUnit(event.unit)
+
+        case CAST_COMPLETE:
+            // Execute the ability effect
+            ExecuteAbilityEffect(event.unit, event.ability, event.targetData)
+
+            // Start recovery
+            state.currentAction = RECOVERING
+            state.actionStartTime = timeline.currentTime
+
+            recoveryTime = CalculateRecoveryTime(event.unit, event.ability)
+            state.actionEndTime = timeline.currentTime + recoveryTime
+
+            // Queue recovery end event
+            timeline.events.enqueue(TimelineEvent(
+                executionTime: state.actionEndTime,
+                eventType: RECOVERY_END,
+                unit: event.unit
+            ))
+
+        case RECOVERY_END:
+            // Unit returns to idle
+            state.currentAction = IDLE
+
+            // Calculate next turn time
+            turnDelay = CalculateTurnDelay(event.unit)
+            state.nextTurnTime = timeline.currentTime + turnDelay
+
+            // Queue next turn
+            timeline.events.enqueue(TimelineEvent(
+                executionTime: state.nextTurnTime,
+                eventType: TURN_READY,
+                unit: event.unit
+            ))
+          } //This function is possibly incomplete
+
+
+function ExecuteAction(unit: Unit, action: Action, timeline: Timeline) {
+    state = timeline.unitStates[unit]
+
+    switch action.type:
+        case ABILITY:
+            ability = action.ability
+
+            // Validate targets in range
+            if !IsTargetValid(unit, ability, action.target):
+                return false
+
+            // Start casting
+            state.currentAction = CASTING
+            state.actionStartTime = timeline.currentTime
+            state.queuedAbility = ability
+            state.queuedTarget = action.target
+
+            // Calculate actual cast time
+            castTime = CalculateCastTime(unit, ability)
+            state.actionEndTime = timeline.currentTime + castTime
+
+            // Queue cast completion
+            timeline.events.enqueue(TimelineEvent(
+                executionTime: state.actionEndTime,
+                eventType: CAST_COMPLETE,
+                unit: unit,
+                ability: ability,
+                targetData: action.target
+            ))
+
+            unit.canAct = false
+
+        case MOVE:
+            // Movement might have its own recovery
+            ExecuteMovement(unit, action.position)
+
+            moveRecovery = CalculateMoveRecovery(unit, action.distance)
+            state.nextTurnTime = timeline.currentTime + moveRecovery
+
+            timeline.events.enqueue(TimelineEvent(
+                executionTime: state.nextTurnTime,
+                eventType: TURN_READY,
+                unit: unit
+            ))
+
+        case WAIT:
+            // Skip turn with reduced delay
+            waitDelay = CalculateTurnDelay(unit) * 0.5  // waiting is faster
+            state.nextTurnTime = timeline.currentTime + waitDelay
+
+            timeline.events.enqueue(TimelineEvent(
+                executionTime: state.nextTurnTime,
+                eventType: TURN_READY,
+                unit: unit
+            ))
+}
+
+function CalculateCastTime(unit: Unit, ability: Ability) -> float {
+    baseCastTime = ability.castTime
+
+    switch ability.castTimeModifier:
+        case FIXED:
+            return baseCastTime
+
+        case SPEED_MODIFIED:
+            // Faster units cast quicker
+            speedMultiplier = 1.0 - (unit.stats.speed / 200.0)  // up to 50% reduction
+            return baseCastTime * max(0.5, speedMultiplier)
+
+        case HASTE_AFFECTED:
+            // Affected by haste buffs
+            hasteMultiplier = unit.GetBuffMultiplier("haste")
+            return baseCastTime / hasteMultiplier
+}
+
+function InterruptUnit(target: Unit, timeline: Timeline) {
+    state = timeline.unitStates[target]
+
+    if state.currentAction != CASTING:
+        return false  // Can only interrupt casting
+
+    if !state.queuedAbility.interruptible:
+        return false  // This ability can't be interrupted
+
+    // Cancel the cast
+    state.currentAction = IDLE
+
+    // Remove the cast complete event
+    timeline.events.removeWhere(e =>
+        e.unit == target AND
+        e.eventType == CAST_COMPLETE AND
+        e.executionTime == state.actionEndTime
+    )
+
+    // Apply interrupt penalty
+    penaltyTime = 2.0  // 2 second penalty for being interrupted
+    state.nextTurnTime = timeline.currentTime + penaltyTime
+
+    timeline.events.enqueue(TimelineEvent(
+        executionTime: state.nextTurnTime,
+        eventType: TURN_READY,
+        unit: target
+    ))
+
+    // Visual feedback
+    ShowInterruptEffect(target)
+    return true
+}
+
+// Combo system - reduced cast time for chained abilities
+class ComboAbility extends Ability {
+    comboFrom: List<Ability>  // abilities that can combo into this
+    comboCastReduction: float  // e.g., 0.5 for 50% faster cast
+
+    function GetCastTime(unit: Unit, timeline: Timeline) -> float {
+        lastAbility = GetLastUsedAbility(unit, timeline, timeWindow: 2.0)
+
+        if lastAbility in comboFrom:
+            return castTime * comboCastReduction
+        return castTime
+}
+
+// Channeled abilities
+class ChanneledAbility extends Ability {
+    channelDuration: float
+    tickInterval: float  // how often effect applies
+
+    function StartChannel(unit: Unit, target: TargetData, timeline: Timeline) {
+        numTicks = floor(channelDuration / tickInterval)
+
+        for i in range(0, numTicks):
+            tickTime = timeline.currentTime + castTime + (i * tickInterval)
+
+            timeline.events.enqueue(TimelineEvent(
+                executionTime: tickTime,
+                eventType: CHANNEL_TICK,
+                unit: unit,
+                ability: this,
+                targetData: target
+            ))
+    }
+}
+
+// Delayed abilities
+class DelayedAbility extends Ability {
+    delayAfterCast: float  // time between cast finish and effect
+    telegraphDuration: float  // how long to show warning
+
+    function OnCastComplete(unit: Unit, target: TargetData, timeline: Timeline) {
+        // Show telegraph immediately
+        ShowTelegraph(target.position, telegraphDuration)
+
+        // Queue delayed effect
+        timeline.events.enqueue(TimelineEvent(
+            executionTime: timeline.currentTime + delayAfterCast,
+            eventType: DELAYED_EFFECT,
+            unit: unit,
+            ability: this,
+            targetData: target
+        ))
+    }
+}
+
+class TimelineUI {
+    barLength: float = 800  // pixels
+    timeWindow: float = 10.0  // show next 10 seconds
+
+    function Draw(timeline: Timeline) {
+        // Draw timeline bar
+        DrawRectangle(x: 100, y: 50, width: barLength, height: 20)
+
+        // Draw current time marker
+        DrawLine(x: 100, y: 45, height: 30, color: WHITE)
+
+        // Draw future events
+        for event in timeline.events:
+            if event.executionTime > timeline.currentTime + timeWindow:
+                break
+
+            // Calculate position on bar
+            timeDelta = event.executionTime - timeline.currentTime
+            xPos = 100 + (timeDelta / timeWindow) * barLength
+
+            // Draw event marker
+            DrawUnitIcon(event.unit, x: xPos, y: 50)
+
+            // Draw cast/recovery bars
+            state = timeline.unitStates[event.unit]
+            if state.currentAction == CASTING:
+                DrawCastBar(unit: event.unit,
+                           progress: GetActionProgress(state, timeline),
+                           x: xPos, y: 70)
+    }
+
+    function DrawUnitCastBar(unit: Unit, state: UnitTimelineState, timeline: Timeline) {
+        if state.currentAction == IDLE:
+            return
+
+        progress = (timeline.currentTime - state.actionStartTime) /
+                  (state.actionEndTime - state.actionStartTime)
+
+        barColor = state.currentAction == CASTING ? BLUE : ORANGE
+
+        // Draw above unit
+        worldPos = unit.position + Vector2(0, 2)
+        screenPos = WorldToScreen(worldPos)
+
+        DrawProgressBar(screenPos, progress, barColor)
+
+        // Show time remaining
+        remaining = state.actionEndTime - timeline.currentTime
+        DrawText(remaining.toFixed(1) + "s", screenPos + Vector2(0, -10))
+    }
+}
+
+// Preview system for planning
+function PreviewAction(unit: Unit, ability: Ability, timeline: Timeline) -> ActionPreview {
+    preview = new ActionPreview()
+
+    currentTime = timeline.currentTime
+    state = timeline.unitStates[unit]
+
+    // Calculate when this action would complete
+    if state.currentAction != IDLE:
+        startTime = state.actionEndTime  // start after current action
+    else:
+        startTime = currentTime
+
+    castTime = CalculateCastTime(unit, ability)
+    recoveryTime = CalculateRecoveryTime(unit, ability)
+
+    preview.castStart = startTime
+    preview.castEnd = startTime + castTime
+    preview.recoveryEnd = startTime + castTime + recoveryTime
+    preview.nextTurnTime = preview.recoveryEnd + CalculateTurnDelay(unit)
+
+    // Show on timeline UI
+    DrawPreviewMarkers(preview)
+
+    return preview
+}
+
+// AI decision making with timeline
+function GetAIAction(unit: Unit, timeline: Timeline) -> Action {
+    bestAction = null
+    bestScore = -infinity
+
+    for ability in unit.abilities:
+        // Consider cast time vs enemy actions
+        castTime = CalculateCastTime(unit, ability)
+
+        // Will enemy act before our cast completes?
+        enemyEvents = GetEnemyEvents(timeline,
+                                     timeline.currentTime,
+                                     timeline.currentTime + castTime)
+
+        if enemyEvents.any(e => e.ability.canInterrupt):
+            // Risk of interruption
+            score -= 50
+
+        // Check if we can combo
+        if CanCombo(unit, ability, timeline):
+            score += 30
+
+        // Favor quick abilities when multiple enemies are about to act
+        if enemyEvents.count > 2:
+            score += 100 / castTime  // prefer faster abilities
+
+        // Consider recovery impact
+        recoveryTime = CalculateRecoveryTime(unit, ability)
+        nextTurnTime = timeline.currentTime + castTime + recoveryTime
+
+        // How many enemy turns before we act again?
+        enemyTurnsBeforeNext = CountEnemyTurns(timeline,
+                                               timeline.currentTime,
+                                               nextTurnTime)
+        score -= enemyTurnsBeforeNext * 10
+
+        if score > bestScore:
+            bestScore = score
+            bestAction = CreateAction(ability, FindBestTarget(unit, ability))
+
+    return bestAction
+}
+
+//Preferred for using discrete time units instead of using a float
+class DiscreteTimeline {
+    currentTick: int = 0  // discrete time units
+    timeUnitsPerTurn: int = 100  // base "ATB" gauge
+    events: PriorityQueue<DiscreteTimeEvent>
+    unitStates: Map<Unit, UnitState>
+
+    // For smooth visualization
+    displayTime: float  // interpolated for animations
+    tickDuration: float = 0.1  // seconds per tick for display
+}
+
+class DiscreteTimeEvent {
+    executionTick: int  // when this triggers
+    unit: Unit
+    eventType: EventType
+    priority: int  // for same-tick resolution
+}
+
+// Everything uses integer time units
+class DiscreteAbility {
+    name: string
+    castTime: int  // in ticks (e.g., 30 ticks)
+    recoveryTime: int  // in ticks (e.g., 20 ticks)
+
+    // Speed affects these via multipliers
+    function GetCastTicks(unit: Unit) -> int {
+        baseTicks = castTime
+        speedMod = 100 - min(50, unit.stats.speed / 2)  // 50-100% of base
+        return ceil(baseTicks * speedMod / 100)
+    }
+}
+
+function ProcessTurn(timeline: DiscreteTimeline) {
+    // Process all events at current tick
+    while timeline.events.peek().executionTick == timeline.currentTick:
+        event = timeline.events.dequeue()
+
+        if event.eventType == TURN_READY:
+            unit = event.unit
+
+            // PAUSE HERE for player input
+            if !unit.isAI:
+                PauseForPlayerDecision(unit, timeline)
+                return  // Wait for input
+            else:
+                action = GetAIAction(unit, timeline)
+                ExecuteDiscreteAction(unit, action, timeline)
+
+    // Advance time
+    timeline.currentTick++
+
+    // Check if we need player input at next tick
+    if NextTickHasPlayerTurn(timeline):
+        return  // Pause before advancing
+    else:
+        ProcessTurn(timeline)  // Continue recursively
+}
+
+function PauseForPlayerDecision(unit: Unit, timeline: DiscreteTimeline) {
+    // Show UI for player to decide
+    ShowActionMenu(unit)
+    ShowTimelinePreview(timeline)
+
+    // Game waits here
+    // When player chooses action, call:
+    // ExecuteDiscreteAction(unit, playerAction, timeline)
+    // Then resume: ProcessTurn(timeline)
+}
+
+class InitiativeSystem {
+    baseATB: int = 100  // ticks to get a turn
+
+    function CalculateNextTurn(unit: Unit) -> int {
+        // Speed determines how fast you gain ATB
+        speed = unit.stats.speed
+
+        // Higher speed = fewer ticks to next turn
+        ticksToTurn = baseATB - speed  // simple version
+        // OR more complex:
+        ticksToTurn = ceil(baseATB * (100 / (100 + speed)))
+
+        return ticksToTurn
+    }
+
+    function CalculateInitialDelay(unit: Unit) -> int {
+        // Random starting position based on speed
+        maxDelay = 50
+        speedBonus = min(unit.stats.speed / 2, 40)
+        return Random(0, maxDelay - speedBonus)
+    }
+}
+
+// Alternative: Classic ATB gauge fill
+class ATBSystem {
+    maxGauge: int = 10000
+
+    function ProcessATB(timeline: DiscreteTimeline) {
+        for unit in timeline.units:
+            state = timeline.unitStates[unit]
+
+            if state.currentAction == IDLE:
+                // Fill gauge based on speed
+                fillRate = 100 + unit.stats.speed * 2
+                state.atbGauge += fillRate
+
+                if state.atbGauge >= maxGauge:
+                    state.atbGauge = maxGauge
+
+                    // Unit gets a turn
+                    timeline.events.enqueue(DiscreteTimeEvent(
+                        executionTick: timeline.currentTick,
+                        unit: unit,
+                        eventType: TURN_READY,
+                        priority: unit.stats.speed  // faster units go first on ties
+                    ))
+
+        timeline.currentTick++
+    }
+}
+
+function ExecuteDiscreteAction(unit: Unit, action: Action, timeline: DiscreteTimeline) {
+    state = timeline.unitStates[unit]
+
+    switch action.type:
+        case INSTANT_ABILITY:
+            // Executes immediately, has recovery
+            ExecuteEffect(action.ability, action.target)
+
+            recoveryTicks = action.ability.recoveryTime
+            state.nextTurnTick = timeline.currentTick + recoveryTicks
+
+            ScheduleTurn(unit, state.nextTurnTick, timeline)
+
+        case CAST_ABILITY:
+            // Start casting
+            castTicks = action.ability.GetCastTicks(unit)
+
+            state.currentAction = CASTING
+            state.castCompleteTick = timeline.currentTick + castTicks
+            state.pendingAbility = action.ability
+            state.pendingTarget = action.target
+
+            // Schedule cast completion
+            timeline.events.enqueue(DiscreteTimeEvent(
+                executionTick: state.castCompleteTick,
+                unit: unit,
+                eventType: CAST_COMPLETE
+            ))
+
+        case WAIT:
+            // Half normal wait time
+            waitTicks = CalculateNextTurn(unit) / 2
+            ScheduleTurn(unit, timeline.currentTick + waitTicks, timeline)
+}
+
+// Clean tick-based interruption
+function InterruptAtTick(target: Unit, timeline: DiscreteTimeline) -> boolean {
+    state = timeline.unitStates[target]
+
+    if state.currentAction != CASTING:
+        return false
+
+    // Cancel future cast event
+    RemoveEvent(timeline, target, CAST_COMPLETE, state.castCompleteTick)
+
+    // Add stun penalty
+    stunTicks = 30
+    state.currentAction = STUNNED
+    state.recoverTick = timeline.currentTick + stunTicks
+
+    ScheduleTurn(unit, state.recoverTick, timeline)
+    return true
+}
+
+class TurnOrderDisplay {
+    maxFutureTurns: int = 10
+
+    function CalculateTurnOrder(timeline: DiscreteTimeline) -> List<TurnPreview> {
+        preview = []
+        simulatedTimeline = timeline.copy()
+
+        // Simulate forward to see turn order
+        for i in range(0, maxFutureTurns):
+            nextTurn = GetNextTurn(simulatedTimeline)
+            if !nextTurn:
+                break
+
+            preview.add(TurnPreview(
+                unit: nextTurn.unit,
+                tick: nextTurn.tick,
+                relativeTime: nextTurn.tick - timeline.currentTick
+            ))
+
+            // Simulate unit taking average action
+            avgActionTime = EstimateAverageActionTime(nextTurn.unit)
+            ScheduleTurn(nextTurn.unit,
+                        nextTurn.tick + avgActionTime,
+                        simulatedTimeline)
+
+        return preview
+    }
+
+    function DrawTurnOrder(preview: List<TurnPreview>) {
+        // Show as portrait list
+        for i, turn in enumerate(preview):
+            DrawPortrait(turn.unit, x: 10, y: 100 + i * 60)
+            DrawText(turn.relativeTime + " ticks", x: 80, y: 100 + i * 60)
+
+            // Show what they're doing
+            state = timeline.unitStates[turn.unit]
+            if state.currentAction == CASTING:
+                DrawCastProgress(state, x: 150, y: 100 + i * 60)
+    }
+}
+
+// Delay/Haste effects work cleanly
+class TimeManipulation {
+    function DelayUnit(target: Unit, delayTicks: int, timeline: DiscreteTimeline) {
+        // Find all future events for this unit
+        for event in timeline.events:
+            if event.unit == target AND event.executionTick > timeline.currentTick:
+                event.executionTick += delayTicks
+    }
+
+    function HasteUnit(target: Unit, hasteTicks: int, timeline: DiscreteTimeline) {
+        for event in timeline.events:
+            if event.unit == target AND event.executionTick > timeline.currentTick:
+                // Don't move events into the past
+                event.executionTick = max(timeline.currentTick + 1,
+                                         event.executionTick - hasteTicks)
+    }
+}
+
+// Clock mechanics
+class ClockMechanic {
+    clockSegments: int = 12
+    currentSegment: int = 0
+
+    function OnTickAdvance(timeline: DiscreteTimeline) {
+        // Every X ticks, advance clock
+        if timeline.currentTick % 100 == 0:
+            currentSegment = (currentSegment + 1) % clockSegments
+
+            // Trigger clock-based effects
+            for unit in timeline.units:
+                for buff in unit.buffs:
+                    if buff.triggerSegment == currentSegment:
+                        buff.Activate(unit)
+    }
+}
+
+// Combo system with discrete timing
+class ComboSystem {
+    comboWindow: int = 50  // ticks to chain combo
+
+    function CheckCombo(unit: Unit, ability: Ability, timeline: DiscreteTimeline) -> boolean {
+        lastAction = unit.lastActionTick
+
+        if timeline.currentTick - lastAction <= comboWindow:
+            if ability.comboFrom.contains(unit.lastAbility):
+                return true
+        return false
+    }
+}
+
+//Advatages of Discrete over real time
+// 1. Perfect Synchronization
+// No floating point errors, everything aligns perfectly
+function PerfectSimultaneous() {
+    // These will ALWAYS execute together
+    event1.executionTick = 100
+    event2.executionTick = 100
+    // No worries about 99.999999 vs 100.000001
+}
+
+// 2. Save/Load Simplicity
+class SaveState {
+    currentTick: int
+    events: List<SavedEvent>
+    // Perfectly reproducible, no float precision issues
+}
+
+// 3. Network Multiplayer
+function SendAction(action: Action) {
+    packet = {
+        tick: timeline.currentTick,
+        action: action
+    }
+    // Everyone calculates same result
+}
+
+// 4. Clear Player Communication
+function ShowAbilityTooltip(ability: Ability) {
+    return "Cast Time: " + ability.castTime + " ticks\n" +
+           "Recovery: " + ability.recoveryTime + " ticks\n" +
+           "Your speed reduces cast time by " + GetSpeedReduction(unit) + " ticks"
+    // Players can count and plan exactly
+}
+
+// 5. Predictable Gameplay
+function PlayerCanCalculate() {
+    // "If I use this 30-tick ability, enemy acts at tick 145,
+    //  I'll finish at tick 130 + 30 = 160, so they'll interrupt me.
+    //  Better use the 10-tick ability instead."
+}

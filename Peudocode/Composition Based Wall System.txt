@@ -1,0 +1,307 @@
+// Core wall uses composition
+class Wall {
+    exists: boolean
+    type: WallType
+    material: Material
+
+    // Composable behaviors
+    passages: List<IPassage>      // how things move through
+    visuals: List<IVisual>        // how it looks
+    interactions: List<IInteraction>  // what happens when interacted with
+    triggers: List<ITrigger>      // what activates changes
+    states: List<IState>          // state management
+}
+
+// Interfaces for behaviors
+interface IPassage {
+    function CanPass(entity: Entity, direction: Direction) -> boolean
+    function OnPass(entity: Entity)
+}
+
+interface IVisual {
+    function GetTexture(viewSide: Side, state: WallState) -> Texture
+    function GetTransparency() -> float
+    function RenderEffects(renderer: Renderer)
+}
+
+interface IInteraction {
+    function CanInteract(entity: Entity) -> boolean
+    function OnInteract(entity: Entity) -> InteractionResult
+    function GetPrompt() -> string
+}
+
+interface ITrigger {
+    function CheckTrigger(grid: DungeonGrid, position: GridPos) -> boolean
+    function OnTrigger(wall: Wall)
+}
+
+interface IState {
+    function GetCurrentState() -> StateData
+    function TransitionTo(newState: StateData)
+    function Update(deltaTime: float)
+}
+
+// Concrete implementations
+class SecretPassage implements IPassage, ITrigger {
+    revealed: boolean = false
+    triggerType: enum { PUSH, LEVER, SPELL, ITEM }
+    requiredItem: ItemId
+
+    function CanPass(entity: Entity, direction: Direction) -> boolean {
+        return revealed
+    }
+
+    function CheckTrigger(grid: DungeonGrid, position: GridPos) -> boolean {
+        switch triggerType:
+            case PUSH:
+                return PlayerPushedWall(position)
+            case LEVER:
+                return NearbyLeverActivated(grid, position)
+            case ITEM:
+                return PlayerHasItem(requiredItem)
+    }
+
+    function OnTrigger(wall: Wall) {
+        revealed = true
+        wall.visuals.add(new DissolveEffect())
+        PlaySound("secret_found")
+    }
+}
+
+class DoorBehavior implements IPassage, IInteraction, IState {
+    isOpen: boolean = false
+    isLocked: boolean
+    keyId: ItemId
+    autoClose: boolean
+    autoCloseTimer: float
+
+    function CanPass(entity: Entity, direction: Direction) -> boolean {
+        return isOpen
+    }
+
+    function OnInteract(entity: Entity) -> InteractionResult {
+        if isLocked:
+            if entity.HasKey(keyId):
+                isLocked = false
+                isOpen = true
+                return SUCCESS("Door unlocked")
+            return FAILURE("Door is locked")
+
+        isOpen = !isOpen
+        return SUCCESS(isOpen ? "Door opened" : "Door closed")
+    }
+
+    function Update(deltaTime: float) {
+        if autoClose and isOpen:
+            autoCloseTimer -= deltaTime
+            if autoCloseTimer <= 0:
+                isOpen = false
+                autoCloseTimer = AUTO_CLOSE_DURATION
+    }
+}
+
+class IllusoryWall implements IPassage, IVisual {
+    function CanPass(entity: Entity, direction: Direction) -> boolean {
+        return true  // Always passable
+    }
+
+    function GetTexture(viewSide: Side, state: WallState) -> Texture {
+        return TextureLibrary.Get("solid_wall")  // Looks solid
+    }
+
+    function GetTransparency() -> float {
+        if PlayerHasDetectIllusion():
+            return 0.5  // Semi-transparent for player
+        return 1.0  // Fully opaque
+    }
+}
+
+class OneWayPassage implements IPassage, IVisual {
+    allowedDirection: Direction
+
+    function CanPass(entity: Entity, direction: Direction) -> boolean {
+        return direction == allowedDirection
+    }
+
+    function GetTexture(viewSide: Side, state: WallState) -> Texture {
+        if viewSide == GetSide(allowedDirection):
+            return TextureLibrary.Get("passage")
+        return TextureLibrary.Get("solid_wall")
+    }
+}
+
+class WallFactory {
+    function CreateSecretDoor() -> Wall {
+        wall = new Wall()
+
+        // Combine multiple behaviors
+        secret = new SecretPassage(triggerType: PUSH)
+        door = new DoorBehavior(autoClose: true)
+        visual = new SecretDoorVisual()
+
+        wall.passages.add(secret)
+        wall.interactions.add(door)
+        wall.visuals.add(visual)
+        wall.triggers.add(secret)
+        wall.states.add(door)
+
+        return wall
+    }
+
+    function CreatePuzzleWall() -> Wall {
+        wall = new Wall()
+
+        // Complex multi-state puzzle wall
+        puzzle = new PuzzleState(solution: "BLUE,RED,GREEN")
+        visual = new MultiTextureVisual(texturesByState: puzzleTextures)
+        passage = new ConditionalPassage(condition: puzzle.IsSolved)
+
+        wall.states.add(puzzle)
+        wall.visuals.add(visual)
+        wall.passages.add(passage)
+        wall.interactions.add(new PuzzleInteraction(puzzle))
+
+        return wall
+    }
+
+    function CreateMimicWall() -> Wall {
+        wall = new Wall()
+
+        // Wall that's actually a monster!
+        mimic = new MimicBehavior()
+        wall.passages.add(mimic)
+        wall.interactions.add(mimic)
+        wall.triggers.add(new ProximityTrigger(range: 1, target: mimic))
+        wall.visuals.add(new MimicVisual())
+
+        return wall
+    }
+}
+
+// The problem with inheritance:
+class Wall { ... }
+class Door extends Wall { ... }
+class SecretWall extends Wall { ... }
+class SecretDoor extends ??? // Door or SecretWall? Can't extend both!
+
+// Even worse with more combinations:
+class LockableDoor extends Door { ... }
+class TrapDoor extends Door { ... }
+class LockableTrapDoor extends ??? // Explosion of classes!
+class SecretLockableTrapDoor extends ??? // Getting ridiculous!
+
+// With composition, just mix and match:
+function CreateComplexWall() -> Wall {
+    wall = new Wall()
+    wall.passages.add(new SecretPassage())
+    wall.passages.add(new DoorBehavior(locked: true))
+    wall.triggers.add(new TrapTrigger())
+    wall.interactions.add(new LockInteraction())
+    // Any combination works!
+    return wall
+}
+
+class WallModificationSystem {
+    function EnchantWall(wall: Wall, enchantment: Enchantment) {
+        // Add new behaviors at runtime!
+        switch enchantment:
+            case PHASING:
+                // Wall becomes passable during full moon
+                wall.passages.add(new ConditionalPassage(
+                    condition: () => IsFullMoon()
+                ))
+
+            case ANIMATED:
+                // Wall can talk and give hints
+                wall.interactions.add(new DialogueInteraction(
+                    lines: ["I am the guardian wall...", "Seek the key in the depths"]
+                ))
+
+            case TELEPORTER:
+                // Walking through teleports you
+                wall.passages.add(new TeleportPassage(destination: otherSide))
+    }
+
+    function CurseWall(wall: Wall) {
+        // Modify existing behaviors
+        wall.triggers.add(new CurseTrigger())
+        wall.visuals.add(new CurseVisualEffect())
+
+        // Wrap existing passage behavior
+        originalPassage = wall.passages[0]
+        wall.passages[0] = new CursedPassage(originalPassage)
+    }
+
+    function TransformWall(wall: Wall, duration: float) {
+        // Temporarily change wall behaviors
+        transformation = new TemporaryTransformation(duration)
+        transformation.Store(wall)  // Save current state
+
+        wall.passages.clear()
+        wall.passages.add(new PhasePassage())
+        wall.visuals.add(new ShimmerEffect())
+
+        // Revert after duration
+        ScheduleRevert(wall, transformation, duration)
+    }
+}
+
+// Easy to test
+class MockPassage implements IPassage {
+    passable: boolean
+    function CanPass(entity: Entity, direction: Direction) -> boolean {
+        return passable
+    }
+}
+
+// Easy to extend
+class PressurePlatePassage implements IPassage {
+    requiredWeight: float
+
+    function CanPass(entity: Entity, direction: Direction) -> boolean {
+        platePressed = CheckPressurePlate(GetAdjacentPlate())
+        return platePressed and GetPlateWeight() >= requiredWeight
+    }
+}
+
+// Easy to combine
+class CompositePassage implements IPassage {
+    requirements: List<IPassage>
+    mode: enum { ALL, ANY, NONE }
+
+    function CanPass(entity: Entity, direction: Direction) -> boolean {
+        switch mode:
+            case ALL:
+                return requirements.all(r => r.CanPass(entity, direction))
+            case ANY:
+                return requirements.any(r => r.CanPass(entity, direction))
+            case NONE:
+                return !requirements.any(r => r.CanPass(entity, direction))
+    }
+}
+
+// Easy to serialize
+function SerializeWall(wall: Wall) -> JSON {
+    data = {
+        behaviors: []
+    }
+
+    for passage in wall.passages:
+        data.behaviors.add({
+            type: passage.GetType(),
+            config: passage.Serialize()
+        })
+
+    return data
+}
+
+function DeserializeWall(data: JSON) -> Wall {
+    wall = new Wall()
+
+    for behaviorData in data.behaviors:
+        behavior = BehaviorFactory.Create(behaviorData.type)
+        behavior.Deserialize(behaviorData.config)
+        wall.AddBehavior(behavior)
+
+    return wall
+}

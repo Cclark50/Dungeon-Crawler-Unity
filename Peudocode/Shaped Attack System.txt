@@ -1,0 +1,294 @@
+class ConeAttack {
+    origin: Vector2
+    direction: Vector2  // normalized
+    angle: float  // cone angle in degrees (e.g., 60 for 60° cone)
+    range: float  // how far the cone extends
+}
+
+function IsPointInCone(point: Vector2, cone: ConeAttack) -> boolean {
+    // Vector from origin to point
+    toPoint = point - cone.origin
+    distance = Length(toPoint)
+
+    // Check if within range
+    if distance > cone.range:
+        return false
+
+    // Check angle
+    toPointNormalized = Normalize(toPoint)
+    dotProduct = Dot(toPointNormalized, cone.direction)
+    angleToPoint = acos(dotProduct) * (180 / PI)  // convert to degrees
+
+    // Check if within half-angle on either side
+    return angleToPoint <= (cone.angle / 2)
+}
+
+function GetUnitsInCone(caster: Unit, direction: Vector2, angle: float, range: float, arena: Arena) -> List<Unit> {
+    targets = []
+    cone = ConeAttack(caster.position, direction, angle, range)
+
+    // Broad phase: get all units within range circle
+    potentialTargets = GetUnitsInRadius(caster.position, range, arena)
+
+    // Narrow phase: check cone angle
+    for unit in potentialTargets:
+        if unit.team != caster.team AND IsPointInCone(unit.position, cone):
+            targets.add(unit)
+
+    return targets
+}
+
+// Base shape interface
+abstract class AttackShape {
+    abstract function Contains(point: Vector2, origin: Vector2, rotation: float) -> boolean
+    abstract function GetBounds() -> BoundingBox  // for optimization
+    abstract function Draw(origin: Vector2, rotation: float)
+}
+
+// Moon/Crescent shape
+class MoonShape extends AttackShape {
+    outerRadius: float
+    innerRadius: float
+    offsetX: float  // how much the inner circle is offset
+
+    function Contains(point: Vector2, origin: Vector2, rotation: float) -> boolean {
+        // Rotate point to local space
+        localPoint = RotatePoint(point - origin, -rotation)
+
+        // Check if in outer circle
+        distanceOuter = Distance(localPoint, Vector2.zero)
+        if distanceOuter > outerRadius:
+            return false
+
+        // Check if NOT in inner circle (the "bite" of the moon)
+        innerCenter = Vector2(offsetX, 0)
+        distanceInner = Distance(localPoint, innerCenter)
+
+        return distanceInner >= innerRadius
+    }
+}
+
+// Rectangle/Line attack
+class RectangleShape extends AttackShape {
+    width: float
+    length: float
+
+    function Contains(point: Vector2, origin: Vector2, rotation: float) -> boolean {
+        localPoint = RotatePoint(point - origin, -rotation)
+
+        return abs(localPoint.x) <= width/2 AND
+               localPoint.y >= 0 AND
+               localPoint.y <= length
+    }
+}
+
+// Star burst pattern
+class StarShape extends AttackShape {
+    numPoints: int
+    innerRadius: float
+    outerRadius: float
+
+    function Contains(point: Vector2, origin: Vector2, rotation: float) -> boolean {
+        localPoint = RotatePoint(point - origin, -rotation)
+        distance = Length(localPoint)
+        angle = atan2(localPoint.y, localPoint.x)
+
+        // Calculate the radius at this angle for a star
+        segmentAngle = (2 * PI) / (numPoints * 2)
+        segmentIndex = floor(angle / segmentAngle)
+
+        if segmentIndex % 2 == 0:
+            // On a point
+            maxRadius = outerRadius
+        else:
+            // In a valley
+            maxRadius = innerRadius
+
+        // Smooth interpolation for better feel
+        angleInSegment = angle % segmentAngle
+        t = angleInSegment / segmentAngle
+
+        if segmentIndex % 2 == 0:
+            currentRadius = Lerp(outerRadius, innerRadius, t)
+        else:
+            currentRadius = Lerp(innerRadius, outerRadius, t)
+
+        return distance <= currentRadius
+    }
+}
+
+// Wave/Sine wave attack
+class WaveShape extends AttackShape {
+    length: float
+    amplitude: float
+    frequency: float
+    thickness: float
+
+    function Contains(point: Vector2, origin: Vector2, rotation: float) -> boolean {
+        localPoint = RotatePoint(point - origin, -rotation)
+
+        if localPoint.y < 0 OR localPoint.y > length:
+            return false
+
+        // Calculate wave position at this y
+        expectedX = sin(localPoint.y * frequency) * amplitude
+        distanceFromWave = abs(localPoint.x - expectedX)
+
+        return distanceFromWave <= thickness / 2
+    }
+}
+
+// Spiral attack
+class SpiralShape extends AttackShape {
+    numRotations: float
+    maxRadius: float
+    thickness: float
+
+    function Contains(point: Vector2, origin: Vector2, rotation: float) -> boolean {
+        localPoint = RotatePoint(point - origin, -rotation)
+
+        distance = Length(localPoint)
+        angle = atan2(localPoint.y, localPoint.x)
+
+        // Spiral equation: r = a * θ
+        spiralGrowthRate = maxRadius / (numRotations * 2 * PI)
+
+        // Check multiple spiral arms
+        for spiralOffset in range(0, 2*PI, 2*PI/3):  // 3 arms
+            expectedRadius = spiralGrowthRate * (angle + spiralOffset)
+
+            // Check all rotations of the spiral
+            for rotation in range(0, numRotations):
+                adjustedRadius = expectedRadius + (rotation * 2 * PI * spiralGrowthRate)
+
+                if abs(distance - adjustedRadius) <= thickness:
+                    return true
+
+        return false
+    }
+}
+
+// Combine multiple shapes
+class CompositeShape extends AttackShape {
+    shapes: List<AttackShape>
+    operation: enum { UNION, INTERSECTION, DIFFERENCE }
+
+    function Contains(point: Vector2, origin: Vector2, rotation: float) -> boolean {
+        switch operation:
+            case UNION:  // Any shape contains point
+                for shape in shapes:
+                    if shape.Contains(point, origin, rotation):
+                        return true
+                return false
+
+            case INTERSECTION:  // All shapes contain point
+                for shape in shapes:
+                    if !shape.Contains(point, origin, rotation):
+                        return false
+                return true
+
+            case DIFFERENCE:  // First shape minus others
+                if !shapes[0].Contains(point, origin, rotation):
+                    return false
+                for i in range(1, shapes.length):
+                    if shapes[i].Contains(point, origin, rotation):
+                        return false
+                return true
+    }
+}
+
+// Example: X-shaped attack
+function CreateXAttack() -> CompositeShape {
+    diagonal1 = new RectangleShape(width: 2, length: 10)
+    diagonal2 = new RectangleShape(width: 2, length: 10)
+
+    composite = new CompositeShape()
+    composite.operation = UNION
+    composite.shapes = [
+        RotatedShape(diagonal1, 45),
+        RotatedShape(diagonal2, -45)
+    ]
+    return composite
+}
+
+class ShapedAbility extends Ability {
+    shape: AttackShape
+    rotationType: enum {
+        FIXED,           // Always same direction
+        TOWARD_TARGET,   // Aims at target position
+        FREE_AIM,        // Player can rotate freely
+        CHARACTER_FACING // Uses character's facing direction
+    }
+
+    function GetAffectedUnits(caster: Unit, targetPos: Vector2, arena: Arena) -> List<Unit> {
+        rotation = 0
+
+        switch rotationType:
+            case TOWARD_TARGET:
+                direction = targetPos - caster.position
+                rotation = atan2(direction.y, direction.x)
+            case CHARACTER_FACING:
+                rotation = caster.facingAngle
+            case FREE_AIM:
+                rotation = GetPlayerAimAngle()
+
+        affected = []
+
+        // Optimization: broad phase with bounding box
+        bounds = shape.GetBounds()
+        rotatedBounds = RotateBounds(bounds, rotation)
+        potentialTargets = GetUnitsInBounds(rotatedBounds, arena)
+
+        // Narrow phase: exact shape check
+        for unit in potentialTargets:
+            if shape.Contains(unit.position, caster.position, rotation):
+                affected.add(unit)
+
+        return affected
+    }
+}
+
+// Visualization
+function DrawAttackPreview(ability: ShapedAbility, caster: Unit, mousePos: Vector2) {
+    rotation = CalculateRotation(ability.rotationType, caster, mousePos)
+
+    // Draw shape outline
+    ability.shape.Draw(caster.position, rotation)
+
+    // Highlight affected units
+    affected = ability.GetAffectedUnits(caster, mousePos, arena)
+    for unit in affected:
+        DrawHighlight(unit, ENEMY_COLOR if unit.team != caster.team else FRIENDLY_COLOR)
+}
+
+// Boomerang arc
+class BoomerangShape extends AttackShape {
+    function Contains(point: Vector2, origin: Vector2, rotation: float) -> boolean {
+        local = RotatePoint(point - origin, -rotation)
+
+        // Parametric curve for boomerang path
+        // Could use Bezier curve or simple parabola
+        t = local.x / maxRange  // 0 to 1
+        expectedY = sin(t * PI) * curveWidth
+
+        distance = Distance(local, Vector2(local.x, expectedY))
+        return distance <= thickness AND t >= 0 AND t <= 1
+    }
+}
+
+// DNA Helix attack
+class HelixShape extends AttackShape {
+    function Contains(point: Vector2, origin: Vector2, rotation: float) -> boolean {
+        local = RotatePoint(point - origin, -rotation)
+
+        // Two intertwined helixes
+        helix1Y = sin(local.x * frequency) * amplitude
+        helix2Y = sin(local.x * frequency + PI) * amplitude
+
+        dist1 = Distance(local, Vector2(local.x, helix1Y))
+        dist2 = Distance(local, Vector2(local.x, helix2Y))
+
+        return (dist1 <= thickness OR dist2 <= thickness) AND
+               local.x >= 0 AND local.x <= range
+    }
+}

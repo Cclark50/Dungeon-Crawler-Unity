@@ -1,0 +1,327 @@
+// Core Data Structures
+class Unit {
+    position: Vector2
+    stats: {
+        health, maxHealth
+        speed  // affects movement radius
+        attack, defense
+    }
+    abilities: List<Ability>
+    isAlive: boolean
+    team: TeamID
+}
+
+class Ability {
+    name: string
+    range: float  // attack radius
+    damage: float
+    aoeRadius: float  // 0 for single target
+    cooldown: int
+    currentCooldown: int
+}
+
+class BattleArena {
+    centerPoint: Vector2
+    radius: float
+    units: List<Unit>
+    currentTurnUnit: Unit
+    turnOrder: Queue<Unit>
+}
+
+// Core Functions
+
+function IsWithinArena(position: Vector2, arena: BattleArena) -> boolean {
+    distance = Distance(position, arena.centerPoint)
+    return distance <= arena.radius
+}
+
+function GetMovementRadius(unit: Unit) -> float {
+    baseRadius = 5.0  // base movement units
+    speedModifier = unit.stats.speed * 0.5  // speed affects radius
+    return baseRadius + speedModifier
+}
+
+function GetValidMovePositions(unit: Unit, arena: BattleArena) -> List<Vector2> {
+    validPositions = []
+    moveRadius = GetMovementRadius(unit)
+
+    // Sample points in a circle around unit
+    for angle in range(0, 360, 10):  // sample every 10 degrees
+        for distance in range(0, moveRadius, 0.5):  // sample distances
+            testPoint = unit.position + PolarToCartesian(distance, angle)
+
+            if IsWithinArena(testPoint, arena) AND
+               !IsOccupied(testPoint, arena.units) {
+                validPositions.add(testPoint)
+            }
+
+    return validPositions
+}
+
+function GetTargetsInRange(unit: Unit, ability: Ability, arena: BattleArena) -> List<Unit> {
+    targetsInRange = []
+
+    for targetUnit in arena.units:
+        if targetUnit == unit OR !targetUnit.isAlive:
+            continue
+
+        distance = Distance(unit.position, targetUnit.position)
+        if distance <= ability.range:
+            targetsInRange.add(targetUnit)
+
+    return targetsInRange
+}
+
+function MoveUnit(unit: Unit, targetPosition: Vector2, arena: BattleArena) -> boolean {
+    moveRadius = GetMovementRadius(unit)
+    distance = Distance(unit.position, targetPosition)
+
+    if distance > moveRadius:
+        return false  // Out of movement range
+
+    if !IsWithinArena(targetPosition, arena):
+        return false  // Outside arena bounds
+
+    if IsOccupied(targetPosition, arena.units):
+        return false  // Position occupied
+
+    unit.position = targetPosition
+    return true
+}
+
+function ExecuteAbility(caster: Unit, ability: Ability, targetPosition: Vector2, arena: BattleArena) {
+    // Check if target is in range
+    distance = Distance(caster.position, targetPosition)
+    if distance > ability.range:
+        return  // Target out of range
+
+    // Handle AoE
+    if ability.aoeRadius > 0:
+        affectedUnits = GetUnitsInRadius(targetPosition, ability.aoeRadius, arena)
+        for unit in affectedUnits:
+            if unit.team != caster.team:
+                ApplyDamage(unit, ability.damage, caster)
+    else:
+        // Single target
+        target = GetUnitAtPosition(targetPosition, arena)
+        if target AND target.team != caster.team:
+            ApplyDamage(target, ability.damage, caster)
+
+    ability.currentCooldown = ability.cooldown
+}
+
+// Turn Management
+
+function InitializeBattle(arena: BattleArena) {
+    // Sort units by speed for turn order
+    sortedUnits = SortBySpeed(arena.units)
+    for unit in sortedUnits:
+        arena.turnOrder.enqueue(unit)
+}
+
+function ProcessTurn(arena: BattleArena) {
+    currentUnit = arena.turnOrder.dequeue()
+
+    if !currentUnit.isAlive:
+        return  // Skip dead units
+
+    // Player/AI makes decisions here
+    action = GetPlayerAction(currentUnit)
+
+    switch action.type:
+        case MOVE:
+            MoveUnit(currentUnit, action.targetPosition, arena)
+        case ATTACK:
+            ExecuteAbility(currentUnit, action.ability, action.targetPosition, arena)
+        case MOVE_AND_ATTACK:
+            MoveUnit(currentUnit, action.movePosition, arena)
+            ExecuteAbility(currentUnit, action.ability, action.targetPosition, arena)
+        case WAIT:
+            // Do nothing
+
+    // Re-add to turn queue
+    arena.turnOrder.enqueue(currentUnit)
+
+    // Update cooldowns
+    for ability in currentUnit.abilities:
+        if ability.currentCooldown > 0:
+            ability.currentCooldown--
+}
+
+// Visualization Helpers
+
+function DrawMovementRange(unit: Unit, arena: BattleArena) {
+    radius = GetMovementRadius(unit)
+    DrawCircle(unit.position, radius, BLUE_TRANSPARENT)
+
+    // Clip to arena bounds
+    if Distance(unit.position, arena.centerPoint) + radius > arena.radius:
+        // Draw intersection with arena edge
+        DrawArcIntersection(unit.position, radius, arena)
+}
+
+function DrawAttackRange(unit: Unit, ability: Ability) {
+    DrawCircle(unit.position, ability.range, RED_TRANSPARENT)
+    if ability.aoeRadius > 0:
+        // Show AoE indicator at mouse position
+        DrawCircle(mousePosition, ability.aoeRadius, ORANGE_TRANSPARENT)
+}
+
+// Helper Functions
+
+function Distance(a: Vector2, b: Vector2) -> float {
+    return sqrt((b.x - a.x)^2 + (b.y - a.y)^2)
+}
+
+function IsOccupied(position: Vector2, units: List<Unit>) -> boolean {
+    threshold = 0.5  // Units can't be closer than this
+    for unit in units:
+        if Distance(position, unit.position) < threshold:
+            return true
+    return false
+}
+
+function GetUnitsInRadius(center: Vector2, radius: float, arena: BattleArena) -> List<Unit> {
+    unitsInRadius = []
+    for unit in arena.units:
+        if Distance(center, unit.position) <= radius:
+            unitsInRadius.add(unit)
+    return unitsInRadius
+}
+
+//Spacial Grid Approach
+class SpatialGrid {
+    cellSize: float  // e.g., 0.5 units
+    gridWidth, gridHeight: int
+    cells: Array2D<List<Unit>>  // Multiple units can overlap cells
+    arenaCenter: Vector2
+    arenaRadius: float
+}
+
+function InitializeGrid(arenaRadius: float, cellSize: float) -> SpatialGrid {
+    grid = new SpatialGrid()
+    grid.cellSize = cellSize
+    grid.arenaRadius = arenaRadius
+
+    // Create grid covering the circular arena
+    gridDiameter = arenaRadius * 2
+    grid.gridWidth = ceil(gridDiameter / cellSize)
+    grid.gridHeight = ceil(gridDiameter / cellSize)
+
+    // Initialize cells
+    for x in range(0, grid.gridWidth):
+        for y in range(0, grid.gridHeight):
+            grid.cells[x][y] = new List<Unit>()
+
+    return grid
+}
+
+function WorldToGrid(worldPos: Vector2, grid: SpatialGrid) -> GridCoord {
+    // Convert world position to grid coordinates
+    offsetPos = worldPos - (grid.arenaCenter - Vector2(grid.arenaRadius, grid.arenaRadius))
+    x = floor(offsetPos.x / grid.cellSize)
+    y = floor(offsetPos.y / grid.cellSize)
+    return GridCoord(x, y)
+}
+
+function UpdateUnitInGrid(unit: Unit, oldPos: Vector2, newPos: Vector2, grid: SpatialGrid) {
+    oldCell = WorldToGrid(oldPos, grid)
+    newCell = WorldToGrid(newPos, grid)
+
+    if oldCell != newCell:
+        grid.cells[oldCell.x][oldCell.y].remove(unit)
+        grid.cells[newCell.x][newCell.y].add(unit)
+
+    unit.position = newPos  // Still store exact position
+}
+
+function GetUnitsInRadius_Grid(center: Vector2, radius: float, grid: SpatialGrid) -> List<Unit> {
+    unitsInRadius = []
+
+    // Calculate which cells to check
+    minCell = WorldToGrid(center - Vector2(radius, radius), grid)
+    maxCell = WorldToGrid(center + Vector2(radius, radius), grid)
+
+    // Only check relevant cells
+    for x in range(max(0, minCell.x), min(grid.gridWidth, maxCell.x + 1)):
+        for y in range(max(0, minCell.y), min(grid.gridHeight, maxCell.y + 1)):
+            // Check if this cell could contain units in radius
+            cellCenter = GridToWorld(x, y, grid)
+
+            // Early reject cells that are completely outside radius
+            if !CellIntersectsCircle(cellCenter, grid.cellSize, center, radius):
+                continue
+
+            // Check units in this cell
+            for unit in grid.cells[x][y]:
+                exactDistance = Distance(unit.position, center)
+                if exactDistance <= radius:
+                    unitsInRadius.add(unit)
+
+    return unitsInRadius
+}
+
+//Hybrid Approach
+class HybridBattleArena {
+    // Precise positions for gameplay
+    units: List<Unit>  // Units store Vector2 positions
+
+    // Spatial grid for optimization
+    spatialGrid: SpatialGrid
+
+    // Arena properties
+    centerPoint: Vector2
+    radius: float
+}
+
+function InitializeBattle(arena: HybridBattleArena) {
+    // Use fine grid for optimization (not gameplay grid)
+    arena.spatialGrid = InitializeGrid(arena.radius, cellSize: 1.0)
+
+    // Place units with exact positions
+    for unit in arena.units:
+        AddUnitToGrid(unit, arena.spatialGrid)
+}
+
+// Fast broad-phase collision detection
+function GetPotentialTargets(center: Vector2, radius: float, arena: HybridBattleArena) -> List<Unit> {
+    // Step 1: Use grid for broad phase
+    candidates = GetUnitsInRadius_Grid(center, radius, arena.spatialGrid)
+
+    // Step 2: Precise distance check (narrow phase)
+    actualTargets = []
+    for unit in candidates:
+        if Distance(unit.position, center) <= radius:
+            actualTargets.add(unit)
+
+    return actualTargets
+}
+
+// Pathfinding with dynamic unit avoidance
+function GetValidMovePosition(targetPos: Vector2, unit: Unit, arena: HybridBattleArena) -> Vector2 {
+    // Check exact position first
+    if !IsOccupied_Precise(targetPos, arena.units, unit):
+        return targetPos
+
+    // Find nearest valid position using spiral search
+    searchRadius = 0.1
+    while searchRadius < 2.0:
+        for angle in range(0, 360, 30):
+            testPos = targetPos + PolarToCartesian(searchRadius, angle)
+            if IsWithinArena(testPos, arena) AND
+               !IsOccupied_Precise(testPos, arena.units, unit):
+                return testPos
+        searchRadius += 0.1
+
+    return unit.position  // Can't move
+}
+
+function IsOccupied_Precise(position: Vector2, units: List<Unit>, excludeUnit: Unit) -> boolean {
+    unitRadius = 0.5  // Each unit's collision radius
+    for unit in units:
+        if unit == excludeUnit OR !unit.isAlive:
+            continue
+        if Distance(position, unit.position) < unitRadius * 2:
+            return true
+    return false
+}
