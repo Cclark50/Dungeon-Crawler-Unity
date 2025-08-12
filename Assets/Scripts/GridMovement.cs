@@ -70,9 +70,8 @@ public class GridMovement : MonoBehaviour
 
     Vector3 GetWorldPosition()
     {
-        return Vector3.zero;
+        return WorldToGridConverter.GridToWorld(_gridPosition);
     }
 }
 
 public enum FacingDirection{North,South,East,West}
-public enum WorldDirection{North,South,East,West}
