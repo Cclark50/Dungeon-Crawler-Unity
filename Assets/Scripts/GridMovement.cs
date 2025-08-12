@@ -18,7 +18,7 @@ public class GridMovement
         OnMovementRequested?.Invoke(request);
     }
 
-    void MoveBackward()
+    void RequestMoveBackward()
     {
         MovementIntent intent = new MovementIntent(MovementType.Backward, _gridPosition, _facingDirection);
         MovementRequestedEventArgs request = new MovementRequestedEventArgs(this, intent, Time.time);
@@ -47,7 +47,7 @@ public class GridMovement
         OnMovementExecuted?.Invoke(new MovementExecutedEventArgs(
             intent,
             oldPosition,
-            toGridPosition,
+            _gridPosition,
             _facingDirection
             ));
     }
@@ -94,15 +94,19 @@ public class MovementExecutedEventArgs
     }
 }
 
-public enum FacingDirection{North = 0,
-    South = 1
-    ,East = 2
-    ,West = 3
+public enum FacingDirection{
+    North = 0,
+    East = 1,
+    South = 2,
+    West = 3
 }
 
 public enum MovementType
 {
-    Forward,Backward,StrafeLeft,StrafeRight,TurnLeft,TurnRight
+    Forward = 0,
+    StrafeRight = 1,
+    Backward = 2,
+    StrafeLeft = 3
 }
 
 public struct MovementIntent
