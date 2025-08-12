@@ -1,71 +1,75 @@
+using System;
+using System.Runtime.CompilerServices;
+using UnityEditorInternal;
 using UnityEngine;
 
-public class GridMovement : MonoBehaviour
+public class GridMovement 
 {
     
     FacingDirection _facingDirection = FacingDirection.North;
     Vector2Int _gridPosition = Vector2Int.zero;
+    public event Action<MovementRequestedEventArgs> OnMovementRequested;
+    public event Action<MovementExecutedEventArgs> OnMovementExecuted;
     
-    // Start is called once before the first execution of Update after the MonoBehaviour is created
-    void Start()
+    void RequestMoveForward()
     {
-        
-    }
-
-    // Update is called once per frame
-    void Update()
-    {
-        
-    }
-
-    void MoveForward()
-    {
-        
+        MovementIntent intent = new MovementIntent(MovementType.Forward, _gridPosition, _facingDirection);
+        MovementRequestedEventArgs request = new MovementRequestedEventArgs(this, intent, Time.time);
+        OnMovementRequested?.Invoke(request);
     }
 
     void MoveBackward()
     {
-        
+        MovementIntent intent = new MovementIntent(MovementType.Backward, _gridPosition, _facingDirection);
+        MovementRequestedEventArgs request = new MovementRequestedEventArgs(this, intent, Time.time);
+        OnMovementRequested?.Invoke(request);
     }
 
-    void StrafeLeft()
+    void RequestStrafeLeft()
     {
-        
+        MovementIntent intent = new MovementIntent(MovementType.StrafeLeft, _gridPosition, _facingDirection);
+        MovementRequestedEventArgs request = new MovementRequestedEventArgs(this, intent, Time.time);
+        OnMovementRequested?.Invoke(request);
     }
 
-    void StrafeRight()
+    void RequestStrafeRight()
     {
+        MovementIntent intent = new MovementIntent(MovementType.StrafeRight, _gridPosition, _facingDirection);
+        MovementRequestedEventArgs request = new MovementRequestedEventArgs(this, intent, Time.time);
+        OnMovementRequested?.Invoke(request);
+    }
+
+    void ExecuteMovement(MovementIntent intent, Vector2Int toGridPosition)
+    {
+        Vector2Int oldPosition = _gridPosition;
+        _gridPosition = toGridPosition;
         
+        OnMovementExecuted?.Invoke(new MovementExecutedEventArgs(
+            intent,
+            oldPosition,
+            toGridPosition,
+            _facingDirection
+            ));
     }
 
     void TurnLeft()
     {
-        
+        _facingDirection = _facingDirection.TurnLeft();
     }
 
     void TurnRight()
     {
-        
+        _facingDirection = _facingDirection.TurnRight();
     }
 
-    Vector2Int GetForwardPosition()
+    void SetPosition(Vector2Int position)
     {
-        return new Vector2Int(0, 0);
+        _gridPosition = position;
     }
 
-    Vector2Int GetBackwardPosition()
+    void SetFacingDirection(FacingDirection facingDirection)
     {
-        return new Vector2Int(0, 0);
-    }
-
-    Vector2Int GetLeftPosition()
-    {
-        return new Vector2Int(0, 0);
-    }
-
-    Vector2Int GetRightPosition()
-    {
-        return new Vector2Int(0, 0);
+        _facingDirection = facingDirection;
     }
 
     Vector3 GetWorldPosition()
@@ -74,4 +78,70 @@ public class GridMovement : MonoBehaviour
     }
 }
 
-public enum FacingDirection{North,South,East,West}
+public class MovementExecutedEventArgs
+{
+    MovementIntent _intent;
+    Vector2Int _oldPosition;
+    Vector2Int _newPosition;
+    FacingDirection _facingDirection;
+
+    public MovementExecutedEventArgs(MovementIntent intent, Vector2Int oldPosition, Vector2Int newPosition, FacingDirection dir)
+    {
+        _intent = intent;
+        _oldPosition = oldPosition;
+        _newPosition = newPosition;
+        _facingDirection = dir;
+    }
+}
+
+public enum FacingDirection{North = 0,
+    South = 1
+    ,East = 2
+    ,West = 3
+}
+
+public enum MovementType
+{
+    Forward,Backward,StrafeLeft,StrafeRight,TurnLeft,TurnRight
+}
+
+public struct MovementIntent
+{
+    public MovementType movementType;
+    public Vector2Int fromPosition;
+    public FacingDirection fromDirection;
+
+    public MovementIntent(MovementType movementType, Vector2Int fromPosition, FacingDirection fromDirection)
+    {
+        this.movementType = movementType;
+        this.fromDirection = fromDirection;
+        this.fromPosition = fromPosition;
+    }
+}
+
+public class MovementRequestedEventArgs
+{
+    public MovementIntent _movementIntent;
+    public GridMovement _GridMovement;
+    public float _time;
+
+    public MovementRequestedEventArgs(GridMovement gridMovement, MovementIntent movementIntent, float time)
+    {
+        _movementIntent = movementIntent;
+        _GridMovement = gridMovement;
+        _time = time;
+    }
+}
+
+public static class DirectionExtensions
+{
+    public static FacingDirection TurnLeft(this FacingDirection direction)
+    {
+        return (FacingDirection)(((int)direction + 1) % 4);
+    }
+    
+    public static FacingDirection TurnRight(this FacingDirection direction)
+    {
+        return (FacingDirection)(((int)direction + 3) % 4);
+    }
+}
