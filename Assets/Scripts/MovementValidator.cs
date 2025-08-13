@@ -28,9 +28,10 @@ public class MovementValidator : MonoBehaviour
     private void HandleMovementRequest(MovementRequestedEventArgs e)
     {
         Vector2Int requestedVec = _directionResolver.GetMovementVector(e._movementIntent.fromDirection, e._movementIntent.movementType);
-        if ((requestedVec.x > 10 || requestedVec.x < -10) && (requestedVec.y > 10 || requestedVec.y < -10))
+        Vector2Int targetVec= e._movementIntent.fromPosition + requestedVec;
+        if ((targetVec.x > 10 || targetVec.x < -10) && (targetVec.y > 10 || targetVec.y < -10))
         {
-            e._GridMovement.ExecuteMovement(e._movementIntent, e._movementIntent.fromPosition + requestedVec);
+            e._GridMovement.ExecuteMovement(e._movementIntent, targetVec);
         }
     }
 }
