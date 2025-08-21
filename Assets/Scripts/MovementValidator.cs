@@ -29,7 +29,7 @@ public class MovementValidator : MonoBehaviour
     {
         Vector2Int requestedVec = _directionResolver.GetMovementVector(e._movementIntent.fromDirection, e._movementIntent.movementType);
         Vector2Int targetVec= e._movementIntent.fromPosition + requestedVec;
-        if ((targetVec.x > 10 || targetVec.x < -10) && (targetVec.y > 10 || targetVec.y < -10))
+        if ((targetVec.x <= 10 && targetVec.x >= -10) && (targetVec.y <= 10 || targetVec.y >= -10))
         {
             e._GridMovement.ExecuteMovement(e._movementIntent, targetVec);
         }
