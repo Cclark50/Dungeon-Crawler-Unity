@@ -3,7 +3,7 @@ using UnityEngine;
 
 public class MovementValidator : MonoBehaviour
 {
-    private GridMovement _gridMovement;
+    public GridMovement _gridMovement;
     public DirectionResolver _directionResolver;
     
     public Vector2Int _minBounds = new Vector2Int(-10, -10);

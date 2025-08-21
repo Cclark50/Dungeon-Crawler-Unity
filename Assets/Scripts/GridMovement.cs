@@ -11,28 +11,28 @@ public class GridMovement
     public event Action<MovementRequestedEventArgs> OnMovementRequested;
     public event Action<MovementExecutedEventArgs> OnMovementExecuted;
     
-    void RequestMoveForward()
+    public void RequestMoveForward()
     {
         MovementIntent intent = new MovementIntent(MovementType.Forward, _gridPosition, _facingDirection);
         MovementRequestedEventArgs request = new MovementRequestedEventArgs(this, intent, Time.time);
         OnMovementRequested?.Invoke(request);
     }
 
-    void RequestMoveBackward()
+    public void RequestMoveBackward()
     {
         MovementIntent intent = new MovementIntent(MovementType.Backward, _gridPosition, _facingDirection);
         MovementRequestedEventArgs request = new MovementRequestedEventArgs(this, intent, Time.time);
         OnMovementRequested?.Invoke(request);
     }
 
-    void RequestStrafeLeft()
+    public void RequestStrafeLeft()
     {
         MovementIntent intent = new MovementIntent(MovementType.StrafeLeft, _gridPosition, _facingDirection);
         MovementRequestedEventArgs request = new MovementRequestedEventArgs(this, intent, Time.time);
         OnMovementRequested?.Invoke(request);
     }
 
-    void RequestStrafeRight()
+    public void RequestStrafeRight()
     {
         MovementIntent intent = new MovementIntent(MovementType.StrafeRight, _gridPosition, _facingDirection);
         MovementRequestedEventArgs request = new MovementRequestedEventArgs(this, intent, Time.time);
@@ -52,22 +52,22 @@ public class GridMovement
             ));
     }
 
-    void TurnLeft()
+    public void TurnLeft()
     {
         _facingDirection = _facingDirection.TurnLeft();
     }
 
-    void TurnRight()
+    public void TurnRight()
     {
         _facingDirection = _facingDirection.TurnRight();
     }
 
-    void SetPosition(Vector2Int position)
+    public void SetPosition(Vector2Int position)
     {
         _gridPosition = position;
     }
 
-    void SetFacingDirection(FacingDirection facingDirection)
+    public void SetFacingDirection(FacingDirection facingDirection)
     {
         _facingDirection = facingDirection;
     }
